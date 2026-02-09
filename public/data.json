@@ -1,0 +1,12 @@
+{
+  "repo": "wix-data-client",
+  "updated_at": "2026-02-09T16:52:59.937Z",
+  "entries": [
+    {
+      "date": "2026-02-09",
+      "branch": "master",
+      "total_tests": 9735,
+      "skipped_count": 43
+    }
+  ]
+}

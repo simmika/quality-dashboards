@@ -62,7 +62,7 @@
       gap: 12px;
     }
 
-    .header-right svg {
+    .header-right > svg {
       width: 18px;
       height: 18px;
       color: #5b6abf;
@@ -220,60 +220,12 @@
     .trend-down { color: #2da44e !important; }
     .trend-flat { color: #8a8fa8 !important; }
 
-    /* ── Webhook section ────────────────────────────────── */
-    .webhook-section {
-      background: #fff;
-      border: 1px solid #e2e6ea;
-      border-radius: 14px;
-      padding: 24px;
-    }
-
-    .webhook-section h2 {
-      font-size: 16px;
-      font-weight: 700;
-      margin-bottom: 14px;
-      color: #1a1a2e;
-    }
-
-    .webhook-url {
-      background: #f5f6fa;
-      border: 1px solid #e2e6ea;
-      border-radius: 8px;
-      padding: 12px 16px;
-      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-      font-size: 14px;
-      color: #5b6abf;
-      word-break: break-all;
-      margin-bottom: 16px;
-    }
-
-    .webhook-url .method {
-      color: #2da44e;
-      font-weight: 700;
-    }
-
-    pre {
-      background: #f5f6fa;
-      border: 1px solid #e2e6ea;
-      border-radius: 8px;
-      padding: 16px;
-      overflow-x: auto;
-      font-size: 13px;
-      line-height: 1.6;
-      color: #3a3f58;
-    }
-
-    .schema-note {
-      font-size: 13px;
+    /* ── Updated-at footer ──────────────────────────────── */
+    .updated-at {
+      text-align: center;
+      font-size: 12px;
       color: #8a8fa8;
-      margin-bottom: 8px;
-    }
-
-    .gh-action-label {
-      font-size: 14px;
-      font-weight: 600;
-      color: #3a3f58;
-      margin: 20px 0 8px;
+      padding: 12px 0 0;
     }
 
     .empty-state {
@@ -327,7 +279,7 @@
           <canvas id="chart"></canvas>
         </div>
         <div class="empty-state" id="empty-state" style="display:none;">
-          <p>No data yet. Send a POST to the webhook below to start tracking.</p>
+          <p>No data yet. The GitHub Action will populate this automatically.</p>
         </div>
       </div>
 
@@ -349,129 +301,112 @@
       </div>
     </div>
 
-    <!-- Webhook docs -->
-    <div class="webhook-section">
-      <h2>Webhook Endpoint</h2>
-      <div class="webhook-url">
-        <span class="method">POST</span> <span id="webhook-url"></span>
-      </div>
-
-      <p class="schema-note">Expected JSON body:</p>
-      <pre>{
-  "date":          "2025-06-15",       // YYYY-MM-DD (required)
-  "repo":          "wix-data-client",  // optional, defaults to wix-data-client
-  "branch":        "master",           // required
-  "total_tests":   4500,               // non-negative integer (required)
-  "skipped_count": 42                  // non-negative integer (required)
-}</pre>
-
-      <p class="gh-action-label">Example GitHub Actions step:</p>
-      <pre>- name: Report skipped tests
-  run: |
-    curl -X POST $DASHBOARD_URL/api/webhook \
-      -H "Content-Type: application/json" \
-      -d '{
-        "date": "'$(date +%Y-%m-%d)'",
-        "repo": "wix-data-client",
-        "branch": "${{ github.ref_name }}",
-        "total_tests": '$TOTAL_TESTS',
-        "skipped_count": '$SKIPPED_COUNT'
-      }'</pre>
-
-      <p class="gh-action-label">Example cURL:</p>
-      <pre>curl -X POST http://localhost:3000/api/webhook \
-  -H "Content-Type: application/json" \
-  -d '{"date":"2025-06-15","branch":"master","total_tests":4500,"skipped_count":42}'</pre>
-    </div>
+    <div class="updated-at" id="updated-at"></div>
   </div>
 
   <script>
-    const API = '';
-    let chart = null;
+    let chartInstance = null;
+    let allData = null;
 
-    const branchSelect = document.getElementById('branch-select');
-    const webhookUrlEl = document.getElementById('webhook-url');
-    const btnRefresh = document.getElementById('btn-refresh');
-
-    webhookUrlEl.textContent = `${window.location.origin}/api/webhook`;
-
-    async function fetchJSON(url) {
-      const res = await fetch(url);
-      return res.json();
+    async function loadData() {
+      const res = await fetch('data.json?t=' + Date.now());
+      allData = await res.json();
+      return allData;
     }
 
-    async function loadBranches() {
-      const branches = await fetchJSON(`${API}/api/branches`);
-      branchSelect.innerHTML = '<option value="">All branches</option>';
-      branches.forEach(b => {
-        const opt = document.createElement('option');
-        opt.value = b;
-        opt.textContent = b;
-        branchSelect.appendChild(opt);
-      });
+    function getBranches(data) {
+      return [...new Set(data.entries.map(e => e.branch))].sort();
     }
 
-    async function loadSummary(branch) {
-      const params = branch ? `?branch=${encodeURIComponent(branch)}` : '';
-      const data = await fetchJSON(`${API}/api/summary${params}`);
+    function filterEntries(data, branch) {
+      let entries = data.entries;
+      if (branch) entries = entries.filter(e => e.branch === branch);
+      return entries.sort((a, b) => a.date.localeCompare(b.date));
+    }
 
+    function computeSummary(entries) {
+      const today = new Date().toISOString().slice(0, 10);
+      const todayEntry = entries.find(e => e.date === today);
+
+      // Last 7 days
+      const last7 = entries.slice(-7);
+      const avg7 = last7.length > 0
+        ? Math.round((last7.reduce((s, e) => s + e.skipped_count, 0) / last7.length) * 10) / 10
+        : null;
+
+      // Previous 7 days (for trend)
+      const prev7 = entries.slice(-14, -7);
+      const avgPrev = prev7.length >= 2
+        ? prev7.reduce((s, e) => s + e.skipped_count, 0) / prev7.length
+        : null;
+
+      let trend = 'flat';
+      if (avg7 !== null && avgPrev !== null) {
+        const diff = avg7 - avgPrev;
+        if (diff > 1) trend = 'up';
+        else if (diff < -1) trend = 'down';
+      }
+
+      return {
+        todaySkipped: todayEntry ? todayEntry.skipped_count : (entries.length > 0 ? entries[entries.length - 1].skipped_count : null),
+        avg7,
+        trend,
+      };
+    }
+
+    function renderSummary(summary) {
       document.getElementById('today-skipped').textContent =
-        data.today_skipped !== null ? data.today_skipped : '—';
+        summary.todaySkipped !== null ? summary.todaySkipped : '—';
 
       document.getElementById('avg-7d').textContent =
-        data.avg_7d !== null ? data.avg_7d : '—';
+        summary.avg7 !== null ? summary.avg7 : '—';
 
       const trendEl = document.getElementById('trend-label');
       const labels = { up: 'Up', down: 'Down', flat: 'Flat' };
-      trendEl.textContent = labels[data.trend] || '—';
-      trendEl.className = `summary-row-value trend-${data.trend}`;
+      trendEl.textContent = labels[summary.trend] || '—';
+      trendEl.className = `summary-row-value trend-${summary.trend}`;
     }
 
-    async function loadChart(branch) {
-      const params = branch ? `?branch=${encodeURIComponent(branch)}` : '';
-      const rows = await fetchJSON(`${API}/api/timeseries${params}`);
-
-      const emptyState = document.getElementById('empty-state');
+    function renderChart(entries) {
       const canvas = document.getElementById('chart');
+      const emptyState = document.getElementById('empty-state');
 
-      if (!rows.length) {
+      if (!entries.length) {
         emptyState.style.display = 'block';
         canvas.style.display = 'none';
-        if (chart) { chart.destroy(); chart = null; }
+        if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
         return;
       }
 
       emptyState.style.display = 'none';
       canvas.style.display = 'block';
 
-      const labels = rows.map(r => {
-        const d = new Date(r.date + 'T00:00:00');
+      const labels = entries.map(e => {
+        const d = new Date(e.date + 'T00:00:00');
         return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       });
-      const skipped = rows.map(r => r.skipped_count);
+      const skipped = entries.map(e => e.skipped_count);
 
-      if (chart) chart.destroy();
+      if (chartInstance) chartInstance.destroy();
 
-      chart = new Chart(canvas, {
+      chartInstance = new Chart(canvas, {
         type: 'line',
         data: {
           labels,
-          datasets: [
-            {
-              label: 'Skipped Tests',
-              data: skipped,
-              borderColor: '#5b6abf',
-              backgroundColor: 'rgba(91, 106, 191, 0.08)',
-              fill: true,
-              tension: 0.4,
-              pointRadius: 4,
-              pointBackgroundColor: '#5b6abf',
-              pointBorderColor: '#fff',
-              pointBorderWidth: 2,
-              pointHoverRadius: 7,
-              borderWidth: 2.5,
-            },
-          ],
+          datasets: [{
+            label: 'Skipped Tests',
+            data: skipped,
+            borderColor: '#5b6abf',
+            backgroundColor: 'rgba(91, 106, 191, 0.08)',
+            fill: true,
+            tension: 0.4,
+            pointRadius: 4,
+            pointBackgroundColor: '#5b6abf',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 2,
+            pointHoverRadius: 7,
+            borderWidth: 2.5,
+          }],
         },
         options: {
           responsive: true,
@@ -511,15 +446,48 @@
       });
     }
 
-    async function refresh() {
-      const branch = branchSelect.value;
-      await Promise.all([loadSummary(branch), loadChart(branch)]);
+    function renderUpdatedAt(data) {
+      const el = document.getElementById('updated-at');
+      if (data.updated_at) {
+        const d = new Date(data.updated_at);
+        el.textContent = `Last updated: ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} at ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+      }
     }
 
-    branchSelect.addEventListener('change', refresh);
-    btnRefresh.addEventListener('click', refresh);
+    async function refresh() {
+      const data = allData || await loadData();
+      const branch = document.getElementById('branch-select').value;
+      const entries = filterEntries(data, branch);
+      const summary = computeSummary(entries);
 
-    loadBranches().then(refresh);
+      renderChart(entries);
+      renderSummary(summary);
+      renderUpdatedAt(data);
+    }
+
+    async function init() {
+      const data = await loadData();
+
+      // Populate branch dropdown
+      const select = document.getElementById('branch-select');
+      getBranches(data).forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = b;
+        select.appendChild(opt);
+      });
+
+      select.addEventListener('change', refresh);
+      document.getElementById('btn-refresh').addEventListener('click', async () => {
+        allData = null;
+        await loadData();
+        refresh();
+      });
+
+      refresh();
+    }
+
+    init();
   </script>
 </body>
 </html>
