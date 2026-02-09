@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: skipped-tests-dashboard
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_DIR
+        value: /var/data
+      - key: CACHE_DIR
+        value: /var/data/cache
+      - key: GH_TOKEN
+        sync: false  # Set manually in Render dashboard
+      - key: FETCH_BRANCHES
+        value: master
+    disk:
+      name: dashboard-data
+      mountPath: /var/data
+      sizeGB: 1
