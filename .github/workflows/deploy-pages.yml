@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'public/**'
+  workflow_dispatch:
 
 permissions:
   pages: write
