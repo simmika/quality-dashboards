@@ -1,0 +1,101 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# This workflow runs INSIDE wix-data-client (private repo).
+# It counts skipped/flaky tests and pushes only the count numbers
+# to the public quality-dashboards repo.
+#
+# HOW TO INSTALL:
+#   1. Copy this file to wix-data-client/.github/workflows/
+#   2. Add a repo secret DASHBOARD_REPO_TOKEN:
+#      - Create a fine-grained PAT at https://github.com/settings/tokens
+#      - Scope: ONLY simmika/quality-dashboards, permissions: Contents (read+write)
+#      - Add it as a secret in wix-data-client repo settings
+#
+# WHAT IT DOES:
+#   - Runs daily at 06:00 UTC (and on manual trigger)
+#   - Counts occurrences of it.skip, test.skip, describe.skip,
+#     it.flaky, test.flaky, describe.flaky in all .ts/.tsx/.js/.jsx files
+#   - Commits the count (just numbers, no source code) to quality-dashboards
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Update Skipped Tests Dashboard
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  count-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout wix-data-client
+        uses: actions/checkout@v4
+
+      - name: Count skipped and flaky tests
+        id: count
+        run: |
+          # Count individual occurrences (not files) of skip/flaky patterns
+          SKIPPED=$(grep -rE '\b(it|test|describe)\.(skip|flaky)\s*\(' \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+            -c . 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+
+          TOTAL=$(grep -rE '\b(it|test|describe)\s*\(' \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+            -c . 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+
+          echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "date=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+
+          echo "Skipped/flaky: $SKIPPED"
+          echo "Total tests:   $TOTAL"
+
+      - name: Checkout quality-dashboards
+        uses: actions/checkout@v4
+        with:
+          repository: simmika/quality-dashboards
+          token: ${{ secrets.DASHBOARD_REPO_TOKEN }}
+          path: dashboard
+
+      - name: Update data.json
+        run: |
+          cd dashboard
+
+          # Use node to safely merge into data.json
+          node -e "
+            const fs = require('fs');
+            const dataPath = 'public/data.json';
+            let data;
+            try { data = JSON.parse(fs.readFileSync(dataPath, 'utf8')); }
+            catch { data = { repo: 'wix-data-client', updated_at: '', entries: [] }; }
+
+            const entry = {
+              date: '${{ steps.count.outputs.date }}',
+              branch: '${{ steps.count.outputs.branch }}',
+              total_tests: ${{ steps.count.outputs.total }},
+              skipped_count: ${{ steps.count.outputs.skipped }}
+            };
+
+            const idx = data.entries.findIndex(e => e.date === entry.date && e.branch === entry.branch);
+            if (idx >= 0) data.entries[idx] = entry;
+            else data.entries.push(entry);
+
+            data.entries.sort((a, b) => a.date.localeCompare(b.date));
+            data.updated_at = new Date().toISOString();
+            fs.writeFileSync(dataPath, JSON.stringify(data, null, 2) + '\n');
+            console.log('Updated data.json: ' + data.entries.length + ' entries');
+          "
+
+      - name: Commit and push to quality-dashboards
+        run: |
+          cd dashboard
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data.json
+          if git diff --cached --quiet; then
+            echo "No changes to data.json"
+          else
+            git commit -m "Update skipped tests: ${{ steps.count.outputs.skipped }} skipped / ${{ steps.count.outputs.total }} total (${{ steps.count.outputs.date }})"
+            git push
+          fi
